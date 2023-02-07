@@ -1,0 +1,91 @@
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+ORANGE='\033[0;33m'
+NOCOLOR='\033[0;m'
+
+# Functions
+function output() {
+    if [ $# -lt 1 ]; then echo -e "${RED}[!] Error in code!${NOCOLOR}" exit 1; fi
+
+    case $2 in
+        SUCCESS) 
+            echo -e "${GREEN}[+] $1${NOCOLOR}"; shift; shift; ;;
+        ERROR)
+            echo -e "${RED}[!] $1${NOCOLOR}"; shift; shift; ;;
+        INFO)
+            echo -e "${ORANGE}[~] $1${NOCOLOR}"; shift; shift; ;;
+        *)
+            echo -e "$1"; shift; shift; ;;
+    esac
+}
+
+function url_encode() {
+    echo "$@" | sed -e 's/ /+/g'
+}
+
+function submit_result() {
+    if [ -z "$RESULT" ]; then output "Please set the RESULT variable" ERROR; exit 1; fi
+    
+    output "Submitted result: ${RESULT}" SUCCESS
+    output "$(curl "${PS_URL}/submitSolution" -X POST -H "Cookie: session=${COOKIE}" -d "answer=${RESULT}")" INFO
+}
+
+function eval_result() {
+    if [ $# -ne 1 ]; then output "Error in code!" ERROR; exit 1; fi
+
+    curl $1 | grep "Congratulations, you solved the lab!" 1>/dev/null
+    if [ $(echo $?) -ne 0 ]; then
+        output "Assignment failed" ERROR
+    else
+        output "Assignment successfull!" SUCCESS
+        exit 0
+    fi
+}
+
+function extract_csrf() {
+    if [ -z "$REQUEST" ]; then output "Please set the REQUEST variable" ERROR; exit 1; fi
+    CSRF=$(echo ${REQUEST} | sed -n "s/.*value=\"\(\S*\)\">.*/\1/p")
+    output "Extracted csrf token: ${CSRF}" SUCCESS
+}
+
+function extract_cookie() {
+    if [ $# -ne 1 ]; then output "Please specify the cookie to extract" ERROR; exit 1; fi
+    if [ -z "$REQUEST" ]; then output "Please set the REQUEST variable" ERROR; exit 1; fi
+    COOKIE=$(echo ${REQUEST} | sed -n "s/.*${1}\s\(\S*\)$/\1/p")
+    output "Extracted ${1} cookie with value: ${COOKIE}" SUCCESS
+}
+
+function login() {
+    if [ $# -ne 2 ]; then output "Please pass a username and password" ERROR; exit 1; fi
+
+    output "GET /login" INFO
+    REQUEST=$(curl -c - "${PS_URL}/login")
+    extract_csrf
+    extract_cookie "session"
+
+    output "POST /login" INFO
+    local REQUEST=$(curl "${PS_URL}/login" -H "Cookie: session=${COOKIE}" -d "csrf=${CSRF}&username=${USERNAME}&password=${PASSWORD}" -X POST -c -)
+    extract_cookie "session"
+}
+
+function decode_jwt() {
+    if [ -z "$COOKIE" ]; then output "Please set the COOKIE variable" ERROR; exit 1; fi
+
+    IFS='.' read JWT_HEADER JWT_PAYLOAD JWT_SIGNATURE << EOF
+$COOKIE
+EOF
+
+    DECODED_JWT_HEADER=$(echo $JWT_HEADER | base64 -d)
+    DECODED_JWT_PAYLOAD=$(echo $JWT_PAYLOAD | base64 -d)
+    output "JWT token: ${DECODED_JWT_HEADER}.${DECODED_JWT_PAYLOAD}.${JWT_SIGNATURE}" SUCCESS
+}
+
+function encode_jwt() {
+    # JWT_HEADER=$(echo $DECODED_JWT_HEADER | base64)
+    JWT_PAYLOAD=$(echo $DECODED_JWT_PAYLOAD | base64)
+    JWT=$(echo "${JWT_HEADER}.${JWT_PAYLOAD}.${JWT_SIGNATURE}" | tr -d '\n')
+    output "Encoded JWT token: $JWT" SUCCESS
+}
+
+# Checks
+if [ -z "$PS_URL" ]; then output "Please set the PS_URL variable" ERROR; exit 1; fi
